@@ -1,15 +1,17 @@
 "use client"
 
 import Link from "next/link"
-
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { Loader2, Download, User } from "lucide-react"
+import { Loader2, User } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { generateAstroTherapeuticProtocol } from "@/lib/astro-ai"
+import { generateProtocol } from "@/lib/protocol-service"
+import { ProtocolViewer } from "@/components/protocol-viewer"
+import type { UserProtocol } from "@/lib/protocol-types"
 import {
   Dialog,
   DialogContent,
@@ -54,9 +56,16 @@ export default function ResultadoPage() {
   const [orientacao, setOrientacao] = useState<string>("")
   const [protocolo, setProtocolo] = useState<string>("")
   const [selectedProtocolo, setSelectedProtocolo] = useState<string | null>(null)
+  const [previewProtocol, setPreviewProtocol] = useState<UserProtocol | null>(null)
   const [isProcessingPayment, setIsProcessingPayment] = useState(false)
   const [showLoginDialog, setShowLoginDialog] = useState(false)
   const [usuario, setUsuario] = useState<Usuario | null>(null)
+  const [mounted, setMounted] = useState(false)
+
+  // Verificar se o componente está montado (cliente)
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   // Opções de protocolo disponíveis para compra
   const protocoloOpcoes: ProtocoloOpcao[] = [
@@ -89,17 +98,20 @@ export default function ResultadoPage() {
   ]
 
   useEffect(() => {
+    // Não executar no servidor
+    if (!mounted) return
+
     // Verificar se o usuário está autenticado
-    const usuarioData = localStorage.getItem("usuario")
-    if (usuarioData) {
-      try {
+    try {
+      const usuarioData = localStorage.getItem("usuario")
+      if (usuarioData) {
         const usuarioParsed = JSON.parse(usuarioData)
         if (usuarioParsed.autenticado) {
           setUsuario(usuarioParsed)
         }
-      } catch (error) {
-        console.error("Erro ao verificar autenticação:", error)
       }
+    } catch (error) {
+      console.error("Erro ao verificar autenticação:", error)
     }
 
     // Função para carregar os dados
@@ -148,10 +160,25 @@ export default function ResultadoPage() {
 
     // Iniciar o carregamento dos dados
     loadData()
-  }, [router])
+  }, [router, mounted])
 
-  const handleSelectProtocolo = (id: string) => {
+  const handleSelectProtocolo = async (id: string) => {
     setSelectedProtocolo(id)
+
+    // Gerar preview do protocolo
+    if (mapa) {
+      try {
+        const baseProtocol = generateProtocol(id as any, mapa)
+        const previewProtocol: UserProtocol = {
+          ...baseProtocol,
+          purchaseDate: "",
+          unlockLevel: "preview",
+        }
+        setPreviewProtocol(previewProtocol)
+      } catch (error) {
+        console.error("Erro ao gerar preview do protocolo:", error)
+      }
+    }
   }
 
   const handleComprarProtocolo = async () => {
@@ -172,20 +199,30 @@ export default function ResultadoPage() {
       // Após o pagamento bem-sucedido, gerar o protocolo
       const protocoloGerado = await generateAstroTherapeuticProtocol(mapa, respostas, orientacao, selectedProtocolo)
 
+      // Gerar o protocolo completo
+      const fullProtocol = generateProtocol(selectedProtocolo as any, mapa)
+
       // Salvar o protocolo (em uma implementação real, isso seria feito no backend)
       // Aqui estamos apenas simulando para demonstração
-      const protocolosUsuario = localStorage.getItem("protocolosUsuario") || "[]"
-      const protocolos = JSON.parse(protocolosUsuario)
-      protocolos.push({
-        id: `proto-${Date.now()}`,
-        titulo: protocoloOpcoes.find((p) => p.id === selectedProtocolo)?.titulo || "",
-        tipo: selectedProtocolo,
-        dataCompra: new Date().toLocaleDateString(),
-        conteudo: protocoloGerado,
-      })
-      localStorage.setItem("protocolosUsuario", JSON.stringify(protocolos))
+      if (mounted) {
+        try {
+          const protocolosUsuario = localStorage.getItem("protocolosUsuario") || "[]"
+          const protocolos = JSON.parse(protocolosUsuario)
+          protocolos.push({
+            ...fullProtocol,
+            purchaseDate: new Date().toLocaleDateString(),
+            unlockLevel: "partial",
+          })
+          localStorage.setItem("protocolosUsuario", JSON.stringify(protocolos))
+        } catch (error) {
+          console.error("Erro ao salvar protocolo:", error)
+        }
+      }
 
       setProtocolo(protocoloGerado)
+
+      // Redirecionar para a página de protocolos
+      router.push("/meus-protocolos")
     } catch (error) {
       console.error("Erro ao processar pagamento:", error)
     } finally {
@@ -193,21 +230,42 @@ export default function ResultadoPage() {
     }
   }
 
-  const handleDownloadPDF = () => {
-    // Implementação para download do PDF
-    alert("Funcionalidade de download será implementada com a integração de geração de PDF")
-  }
-
   const handleLoginRedirect = () => {
     // Salvar o estado atual para retornar após o login
-    localStorage.setItem("redirectAfterLogin", "/resultado")
+    if (mounted) {
+      try {
+        localStorage.setItem("redirectAfterLogin", "/resultado")
+      } catch (error) {
+        console.error("Erro ao salvar redirecionamento:", error)
+      }
+    }
     router.push("/auth/login")
   }
 
   const handleCadastroRedirect = () => {
     // Salvar o estado atual para retornar após o cadastro
-    localStorage.setItem("redirectAfterLogin", "/resultado")
+    if (mounted) {
+      try {
+        localStorage.setItem("redirectAfterLogin", "/resultado")
+      } catch (error) {
+        console.error("Erro ao salvar redirecionamento:", error)
+      }
+    }
     router.push("/auth/cadastro")
+  }
+
+  // Renderização inicial segura para SSR
+  if (!mounted) {
+    return (
+      <div className="container py-12">
+        <Card className="w-full max-w-4xl mx-auto">
+          <CardContent className="flex flex-col items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            <p className="text-sm text-muted-foreground mt-4">Carregando...</p>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   if (isLoading) {
@@ -245,7 +303,7 @@ export default function ResultadoPage() {
           <Tabs defaultValue="orientacao">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="orientacao">Orientação Terapêutica</TabsTrigger>
-              <TabsTrigger value="protocolo" disabled={!protocolo}>
+              <TabsTrigger value="protocolo" disabled={!previewProtocol}>
                 Protocolo Detalhado
               </TabsTrigger>
             </TabsList>
@@ -323,20 +381,7 @@ export default function ResultadoPage() {
               </div>
             </TabsContent>
             <TabsContent value="protocolo" className="pt-4">
-              {protocolo && (
-                <div className="space-y-6">
-                  <div className="prose prose-sm max-w-none">
-                    {protocolo.split("\n\n").map((paragraph, index) => (
-                      <p key={index}>{paragraph}</p>
-                    ))}
-                  </div>
-
-                  <Button onClick={handleDownloadPDF} className="mt-4">
-                    <Download className="mr-2 h-4 w-4" />
-                    Baixar Protocolo em PDF
-                  </Button>
-                </div>
-              )}
+              {previewProtocol && <ProtocolViewer protocol={previewProtocol} onPurchase={handleComprarProtocolo} />}
             </TabsContent>
           </Tabs>
         </CardContent>
@@ -344,12 +389,6 @@ export default function ResultadoPage() {
           <Button variant="outline" onClick={() => router.push("/")}>
             Voltar ao início
           </Button>
-          {protocolo && (
-            <Button onClick={handleDownloadPDF}>
-              <Download className="mr-2 h-4 w-4" />
-              Baixar Protocolo em PDF
-            </Button>
-          )}
         </CardFooter>
       </Card>
 
@@ -466,6 +505,6 @@ function getDesafioArea(mapa: MapaAstrologico, respostas: Record<number, Questio
   ]
 
   // Simplificação para demonstração
-  const index = (mapa.sol.length + mapa.lua.length) % 4
+  const index = ((mapa.sol || "").length + (mapa.lua || "").length) % 4
   return areas[index]
 }
